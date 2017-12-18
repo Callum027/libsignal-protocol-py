@@ -24,6 +24,7 @@ Signal Protocol Python library.
 
 
 import datetime
+import io
 import re
 import subprocess
 import threading
@@ -75,6 +76,80 @@ class Signal(object):
 
 
     #
+    ##
+    #
+
+
+    def messages_read(self, data):
+        '''
+        '''
+
+        # Envelope from: +64275263733 (device: 1)
+        # Timestamp: 1511746018074 (2017-11-27T01:26:58.074Z)
+        # Got receipt.
+
+        # Envelope from: +64275263733 (device: 1)
+        # Timestamp: 1511746064589 (2017-11-27T01:27:44.589Z)
+
+        # Envelope from: +64275263733 (device: 1)
+        # Timestamp: 1511746101590 (2017-11-27T01:28:21.590Z)
+        # Message timestamp: 1511746101590 (2017-11-27T01:28:21.590Z)
+        # Body: Hddhfjfjfjfjffigf
+
+        messages = []
+        data_stream = io.StringIO(data)
+
+        current_message = None
+        for line in data_stream.readline(): 
+            if current_message is None and line.startswith("Envelope from"):
+                result = re.match("^Envelope from: (\+[0-9]+) \(device: ([0-9]+)\)$")
+                current_message = {
+                    "number": result.group(1),
+                    "device": result.group(2),
+                    "timestamp": None,
+                    "message_timestamp": None,
+                    "receipt": False,
+                    "body": None,
+                }
+            elif current_message is not None and line.startswith("Timestamp"):
+                result = re.match(
+                    "^Timestamp: ([0-9]+) "
+                    "\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+                    "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$"
+                )
+                current_message["timestamp"] = datetime.utcfromtimestamp(
+                    int(result.group(1)),
+                )
+            elif current_message is not None and line.startswith("Message timestamp"):
+                result = re.match(
+                    "^Message timestamp: ([0-9]+) "
+                    "\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+                    "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$"
+                )
+                current_message["message_timestamp"] = datetime.utcfromtimestamp(
+                    int(result.group(1)),
+                )
+            elif current_message is not None and line == "Got receipt.":
+                if current_message["body"] is not None:
+                    # raise a stink
+                    raise RuntimeError(
+                        "current_message[\"body\"] is not None "
+                        "but current_message[\"receipt\"] will be set to True"
+                    )
+                current_message["receipt"] = True
+            elif current_message is not None and line.startswith("Body"):
+                if current_message["receipt"] is True:
+                    # raise a stink
+                    raise RuntimeError(
+                        "current_message[\"receipt\"] is True "
+                        "but current_message[\"body\"] will have data put in it"
+                    )
+                current_message["data"] = re.sub("^Body: ", "", data)
+
+        return messages
+
+
+    #
     ## Sending methods.
     #
 
@@ -101,7 +176,12 @@ class Signal(object):
 
         self.lock.acquire(blocking=verify_receipt)
 
+        unhandled_messages = []
+
         try:
+            process = None
+
+            # Send the message.
             args = [self.signal_cli, "send", "-u", username, "-m", message]
 
             if attachments is not None:
@@ -121,70 +201,39 @@ class Signal(object):
                     stderr=subprocess.PIPE,
                 )
                 process.wait(30)
-            except CallledProcessError:
+
+                if process.returncode != 0:
+                    # error handling stuff
+            except CalledProcessError:
+                pass # ...
+
+            # Read stored messages from Signal until the "arrival receipt" is found.
+            # Save unrelated messages to be returned to the caller later.
+            try:
+                process = subprocess.Popen(
+                    [self.signal_cli, "receive", "-u", username],
+                    stdin=subprocess.PIPE
+                    stderr=subprocess.PIPE,
+                )
+                stdout, stderr = process.communicate(60)
+
+                if process.returncode != 0:
+                    # error handling stuff
+
+                messages = self.messages_read(stdout)
+
+                # Look for receipt messages, match up the timestamps. If we have a match,
+                # whoo!
+
+            except TimeoutExpired:
+                process.kill()
+                stdout, stderr = process.communicate()
+
+            except CalledProcessError:
                 pass # ...
 
         finally:
             self.lock.release()
-
-        # Check error code.
-
-        process.stdin
-
-        if (process.stderr)
-
-        try:
-            # TODO: group stuff
-            recs = list(recipient) if isinstance(recipient, list) else [recipient]
-            group_contexts = None # list of GroupContext
-
-            # Upload attachments, and get their IDs and content types.
-            attachment_pointers = None # list of AttachmentPointer
-
-            flags = None # PushMessageContent.Flag (END_SESSION)
-
-            for rec in recs:
-                prekeys = self.send_get_prekey(recipient)        
-
-                # Decide what device to go with.
-
-                for device_id, key_info in prekeys.items():
-                    # TODO: CONTINUE HERE
-                    current_time_millis = datetime.datetime.utcnow() * 1000.0
-                    timestamp = current_time_millis.timestamp() 
-
-                    body = PushMessageContent(
-                        body=message,
-                        attachments=attachment_pointers,
-                        groups=group_contexts,
-                        flags=flags,
-                    ).to_base64()
-
-                    # encrypt body
-
-                    obj = self.api_call(
-                        requests.get,
-                        "/".join(self.endpoint, "messages", recipient),
-                        data={
-                            "messages": [
-                                {
-                                    "type": ,
-                                    "destinationDeviceId": device_id,
-                                    "destinationRegistrationId": ,
-                                    "body": , # "{base64_encoded_message_body}", // Encrypted PushMessageContent
-                                    "timestamp": timestamp,
-                                },
-                            ],
-                        },
-                        recipient=recipient,
-                    )
-
-                response = requests.post(
-                    uri,
-                    auth=HTTPTokenAuth(self.token) if self.token else None,
-                    verify=self.api_ssl_verify,
-                )
-        finally:
 
         return unhandled_messages
 
