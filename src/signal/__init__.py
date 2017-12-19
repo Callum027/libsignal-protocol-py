@@ -100,51 +100,66 @@ class Signal(object):
         data_stream = io.StringIO(data)
 
         current_message = None
+
         for line in data_stream.readline(): 
-            if current_message is None and line.startswith("Envelope from"):
-                result = re.match("^Envelope from: (\+[0-9]+) \(device: ([0-9]+)\)$")
-                current_message = {
-                    "number": result.group(1),
-                    "device": result.group(2),
-                    "timestamp": None,
-                    "message_timestamp": None,
-                    "receipt": False,
-                    "body": None,
-                }
-            elif current_message is not None and line.startswith("Timestamp"):
-                result = re.match(
-                    "^Timestamp: ([0-9]+) "
-                    "\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
-                    "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$"
-                )
-                current_message["timestamp"] = datetime.utcfromtimestamp(
-                    int(result.group(1)),
-                )
-            elif current_message is not None and line.startswith("Message timestamp"):
-                result = re.match(
-                    "^Message timestamp: ([0-9]+) "
-                    "\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
-                    "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$"
-                )
-                current_message["message_timestamp"] = datetime.utcfromtimestamp(
-                    int(result.group(1)),
-                )
-            elif current_message is not None and line == "Got receipt.":
-                if current_message["body"] is not None:
-                    # raise a stink
+            if current_message is None:
+                if line.startswith("Envelope from"):
+                    result = re.match("^Envelope from: (\+[0-9]+) \(device: ([0-9]+)\)$")
+                    current_message = {
+                        "number": result.group(1),
+                        "device": result.group(2),
+                        "timestamp": None,
+                        "message_timestamp": None,
+                        "receipt": False,
+                        "body": None,
+                    }
+                else:
                     raise RuntimeError(
-                        "current_message[\"body\"] is not None "
-                        "but current_message[\"receipt\"] will be set to True"
+                        "found an 'Envelope from' line "
+                        "while processing a previous message",
                     )
-                current_message["receipt"] = True
-            elif current_message is not None and line.startswith("Body"):
-                if current_message["receipt"] is True:
-                    # raise a stink
-                    raise RuntimeError(
-                        "current_message[\"receipt\"] is True "
-                        "but current_message[\"body\"] will have data put in it"
+
+            else:
+                if not line: # Empty line signals end of last message.
+                    messages.append(current_message)
+                    current_message = None
+                elif line.startswith("Timestamp"):
+                    result = re.match(
+                        "^Timestamp: ([0-9]+) "
+                        "\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+                        "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$"
                     )
-                current_message["data"] = re.sub("^Body: ", "", data)
+                    current_message["timestamp"] = datetime.utcfromtimestamp(
+                        int(result.group(1)),
+                    )
+                elif current_message is not None and line.startswith("Message timestamp"):
+                    result = re.match(
+                        "^Message timestamp: ([0-9]+) "
+                        "\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+                        "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$"
+                    )
+                    current_message["message_timestamp"] = datetime.utcfromtimestamp(
+                        int(result.group(1)),
+                    )
+                elif current_message is not None and line == "Got receipt.":
+                    if current_message["body"] is not None:
+                        # raise a stink
+                        raise RuntimeError(
+                            "current_message[\"body\"] is not None "
+                            "but current_message[\"receipt\"] will be set to True"
+                        )
+                    current_message["receipt"] = True
+                elif current_message is not None and line.startswith("Body"):
+                    if current_message["receipt"] is True:
+                        # raise a stink
+                        raise RuntimeError(
+                            "current_message[\"receipt\"] is True "
+                            "but current_message[\"body\"] will have data put in it"
+                        )
+                    current_message["data"] = re.sub("^Body: ", "", data)
+
+        # Finalise last message.
+        messages.append(current_message)
 
         return messages
 
@@ -224,6 +239,8 @@ class Signal(object):
 
                 # Look for receipt messages, match up the timestamps. If we have a match,
                 # whoo!
+                for message in messages:
+                    
 
             except TimeoutExpired:
                 process.kill()
