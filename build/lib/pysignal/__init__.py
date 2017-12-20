@@ -124,7 +124,7 @@ class Signal(object):
                     )
                     current_message["message_timestamp"] = int(result.group(1))
 
-                elif current_message is not None and line == "Got receipt.":
+                elif current_message is not None and line.strip("\n") == "Got receipt.":
                     if current_message["body"] is not None:
                         # raise a stink
                         raise RuntimeError(
