@@ -1,0 +1,7 @@
+setup.py
+src/pysignal/__init__.py
+src/pysignal/exception.py
+src/pysignal.egg-info/PKG-INFO
+src/pysignal.egg-info/SOURCES.txt
+src/pysignal.egg-info/dependency_links.txt
+src/pysignal.egg-info/top_level.txt

@@ -26,12 +26,14 @@ Signal Protocol Python library.
 import datetime
 import io
 import re
+import shutil
 import subprocess
 import threading
 
-from signal import util
-
 from signal.exception import ReceiptNotFoundError
+
+
+SIGNAL_CLI = shutil.which("signal-cli")
 
 
 class Signal(object):
@@ -44,39 +46,13 @@ class Signal(object):
         '''
 
         self.username = username # Says username, is actually user's registered phone number.
+        self.signal_cli = signal_cli
 
         self.lock = threading.Lock()
 
 
     #
-    ## Receiving methods.
-    #
-
-
-    def _receive(self):
-        '''
-        '''
-
-        
-
-
-    def receive(self):
-        '''
-        Receive all unread messages from Signal and return them.
-
-        This method is blocking, and cannot be used concurrently with other threads
-        attempting to run receive() or send().
-        '''
-
-        self.lock.acquire(blocking=True)
-        messages = self._receive(self)
-        self.lock.release()
-
-        return messages
-
-
-    #
-    ##
+    ## Message methods.
     #
 
 
@@ -120,7 +96,8 @@ class Signal(object):
                     )
 
             else:
-                if not line: # Empty line signals end of last message.
+                # Empty line signals end of last message.
+                if not line and current_message is not None:
                     messages.append(current_message)
                     current_message = None
                 elif line.startswith("Timestamp"):
@@ -151,7 +128,6 @@ class Signal(object):
                     current_message["receipt"] = True
                 elif current_message is not None and line.startswith("Body"):
                     if current_message["receipt"] is True:
-                        # raise a stink
                         raise RuntimeError(
                             "current_message[\"receipt\"] is True "
                             "but current_message[\"body\"] will have data put in it"
@@ -162,6 +138,51 @@ class Signal(object):
         messages.append(current_message)
 
         return messages
+
+
+    #
+    ## Receiving methods.
+    #
+
+
+    def receive(self):
+        '''
+        Receive all unread messages from Signal and return them.
+
+        This method is blocking, and cannot be used concurrently with other threads
+        attempting to run receive() or send().
+        '''
+
+        self.lock.acquire(blocking=True)
+        messages = self._receive(self)
+        self.lock.release()
+
+        return messages
+
+
+    def _receive(self):
+        '''
+        '''
+
+        try:
+            process = subprocess.Popen(
+                [self.signal_cli, "receive", "-u", self.username],
+                stdin=subprocess.PIPE
+                stderr=subprocess.PIPE,
+            )
+            stdout, stderr = process.communicate(60)
+
+            if process.returncode != 0:
+                # error handling stuff
+
+            return self.messages_read(stdout)
+
+        except TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+
+        except CalledProcessError:
+            pass # ...
 
 
     #
@@ -197,7 +218,7 @@ class Signal(object):
             process = None
 
             # Send the message.
-            args = [self.signal_cli, "send", "-u", username, "-m", message]
+            args = [self.signal_cli, "send", "-u", self.username, "-m", message]
 
             if attachments is not None:
                 args.append("-a")
@@ -224,30 +245,11 @@ class Signal(object):
 
             # Read stored messages from Signal until the "arrival receipt" is found.
             # Save unrelated messages to be returned to the caller later.
-            try:
-                process = subprocess.Popen(
-                    [self.signal_cli, "receive", "-u", username],
-                    stdin=subprocess.PIPE
-                    stderr=subprocess.PIPE,
-                )
-                stdout, stderr = process.communicate(60)
-
-                if process.returncode != 0:
-                    # error handling stuff
-
-                messages = self.messages_read(stdout)
-
-                # Look for receipt messages, match up the timestamps. If we have a match,
-                # whoo!
-                for message in messages:
-                    
-
-            except TimeoutExpired:
-                process.kill()
-                stdout, stderr = process.communicate()
-
-            except CalledProcessError:
-                pass # ...
+            #
+            # Look for receipt messages, match up the timestamps. If we have a match,
+            # whoo!
+            for message in self._receive():
+                # ...
 
         finally:
             self.lock.release()

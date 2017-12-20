@@ -1,0 +1,24 @@
+Metadata-Version: 1.1
+Name: pysignal
+Version: 1.0.0
+Summary: Signal Protocol Python library
+Home-page: https://github.com/catalyst/pysignal
+Author: Callum Dickinson
+Author-email: callum.dickinson@catalyst.net.nz
+License: GPLv3+
+Description: # libsignal-protocol-py
+        
+        Based on this!
+        
+        https://github.com/WhisperSystems/Signal-Server/wiki/API-Protocol
+        
+Keywords: signal signal-cli messaging encryption
+Platform: UNKNOWN
+Classifier: Development Status :: 5 - Production/Stable
+Classifier: Intended Audience :: System Administrators
+Classifier: Topic :: System :: Networking
+Classifier: License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Programming Language :: Python :: 3.4
+Classifier: Programming Language :: Python :: 3.5
+Classifier: Programming Language :: Python :: 3.6
