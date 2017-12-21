@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import threading
 
+from pysignal.exception import SignalCLIError
 from pysignal.exception import ReceiptNotFoundError
 
 
@@ -163,10 +164,12 @@ class Signal(object):
         '''
 
         self.lock.acquire(blocking=True)
-        messages = self._receive(self)
-        self.lock.release()
 
-        return messages
+        try:
+            return self._receive(self)
+
+        finally:
+            self.lock.release()
 
 
     def _receive(self):
@@ -182,18 +185,19 @@ class Signal(object):
             stdout, stderr = process.communicate(60)
 
             if process.returncode != 0:
-                # TODO: error handling stuff
-                pass
+                raise SignalCLIError(process.returncode, stderr)
 
             return self.messages_read(stdout)
 
         except TimeoutExpired:
             process.kill()
             stdout, stderr = process.communicate()
-            # TODO: handle error appropriately for timing out
+            raise RuntimeError(
+                "timeout reached (60 seconds)\n\nstdout:\n{}\n\nstderr:\n{}".format(stdout, stderr),
+            )
 
         except CalledProcessError:
-            pass # TODO: handle appropriately
+            raise # TODO: handle appropriately
 
 
     #
@@ -228,45 +232,58 @@ class Signal(object):
         try:
             process = None
 
-            # Send the message.
+            # Prepare the signal-cli arguments.
             args = [self.signal_cli, "send", "-u", self.username, "-m", message]
-
             if attachments is not None:
                 args.append("-a")
                 args.extend(attachments)
             else:
                 args.extend(["-a", attachment])
-
             if recipients is not None:
                 args.extend(recipients)
             else:
                 args.append(recipient)
 
+            # Get an approximate time we sent the message.
+            timestamp = (datetime.datetime.utcnow() * 1000.0).timestamp()
+
+            # Call signal-cli to send the message.
             try:
                 process = subprocess.Popen(
                     args,
                     stderr=subprocess.PIPE,
                 )
-                process.wait(30)
-
+                stdout, stderr = process.communicate(30)
                 if process.returncode != 0:
-                    pass # TODO: error handling stuff
-
+                    raise SignalCLIError(process.returncode, stderr)
             except TimeoutExpired:
                 process.kill()
                 stdout, stderr = process.communicate()
                 # TODO: handle error appropriately for timing out
-
             except CalledProcessError:
-                pass # TODO: handle appropriately
+                raise # TODO: handle appropriately
 
+            # TODO: Try and find a better way to implement this... if possible.
+            #
             # Read stored messages from Signal until the "arrival receipt" is found.
             # Save unrelated messages to be returned to the caller later.
             #
             # Look for receipt messages, match up the timestamps. If we have a match,
             # whoo!
-            for message in self._receive():
-                pass # TODO: finish
+            if verify_receipt:
+                receipt_verified = False
+                while not receipt_verified:
+                    messages = self._receive()
+                    receipts = [message for message in messages if message["receipt"]]
+                    sorted_receipts = sorted(receipts, key=lambda x: x["timestamp"])
+                    for receipt in sorted_receipts:
+                        if receipt["timestamp"] < timestamp:
+                            continue
+                        # If we reach this point, we've found the first receipt
+                        # timestamped AFTER ours, which we may safely assume to be
+                        # receipt for this message.
+                        receipt_verified = True
+                        pass # TODO: finish
 
         finally:
             self.lock.release()

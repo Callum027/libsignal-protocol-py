@@ -27,17 +27,17 @@ class SignalException(Exception):
     pass
 
 
-class APIError(SignalException):
+class SignalCLIError(SignalException):
     '''
     '''
 
-    def __init__(self, status_code, error_message):
+    def __init__(self, returncode, error_message):
         '''
         '''
 
-        self.status_code = status_code
+        self.returncode = status_code
         self.error_message = error_message
-        super().__init__("ERROR {}: {}".format(self.status_code, self.error_message))
+        super().__init__("ERROR {}: {}".format(self.returncode, self.error_message))
 
 
 class ReceiptNotFoundError(SignalException):
