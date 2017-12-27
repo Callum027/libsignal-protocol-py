@@ -176,6 +176,8 @@ class Signal(object):
         '''
         '''
 
+        # TODO: add attachment support.
+
         try:
             process = subprocess.Popen(
                 [self.signal_cli, "receive", "-u", self.username],
@@ -219,6 +221,10 @@ class Signal(object):
         and in this case cannot be used concurrently with other threads attempting to
         run receive() or send().
         '''
+
+        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# ./signal-cli -u +61481073042 send -m "Test Message 02" +64220908052
+        #Failed to send (some) messages:
+        #Untrusted Identity for "+64220908052": Untrusted identity key!
 
         # * Allow more than one recipient and attachment to be specified.
         # * Take a timestamp of when the message was sent, look for the first receipt for
@@ -291,66 +297,97 @@ class Signal(object):
         return unhandled_messages
 
 
-    def send_get_prekey(self, recipient):
-        '''
-        Helper method for send() to fetch the prekeys for the given recipient.
-        '''
-
-        if recipient in send_prekeys:
-            return send_prekeys[recipient]
-
-        obj = self.api_call(
-            requests.get,
-            "/".join(self.endpoint, "keys", recipient, "*"),
-            recipient=recipient,
-        )
-
-        prekeys = {}
-        for data in obj["keys"]:
-            prekeys[data["deviceId"]] = {
-                "keyId": data["keyId"],
-                "publicKey": data["publicKey"],
-                "identityKey": data["identityKey"],
-            }
-
-        self.send_prekeys[recipient] = prekeys
-        return prekeys
-
-
     #
-    ## Attachment methods.
+    ##
     #
 
 
-    def attachment_allocate(self):
+    def safety_number_verify(self, safety_number):
         '''
-        Allocate a unique attachment ID, and return that and its corresponding URL.
-
-        This method is not blocking, and is unaffected by the receive/send lock.
         '''
 
-        # ...
+        # TODO
+        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# time ./signal-cli -u +61481073042 listIdentities
+        #+64275263733: TRUSTED_UNVERIFIED Added: Mon Nov 27 13:14:40 NZDT 2017 Fingerprint: 05 44 df fe 10 ec 38 47 d1 b5 14 79 37 ab 9e 1c 8a e5 37 d6 1e b6 8b 16 72 cf da 6e 97 9e 42 c3 33  Safety Number: 15778 20682 42583 15572 36500 86531 74249 00584 14631 26803 60323 14180
+        #+64224307685: TRUSTED_VERIFIED Added: Mon Nov 27 14:45:32 NZDT 2017 Fingerprint: 05 c6 cb 14 b9 b8 1b db af 92 3f f0 bb a4 36 92 f8 43 a6 78 30 94 3b fb 4b 7a a4 db 1c d6 3e 9e 62  Safety Number: 60455 13090 15565 16601 14619 41766 74249 00584 14631 26803 60323 14180
+        #+64220908052: TRUSTED_UNVERIFIED Added: Tue Nov 28 10:09:09 NZDT 2017 Fingerprint: 05 e6 ac fb ad fe b0 7d dd df ca f9 c3 29 db 14 34 7a fa 45 18 1a 68 9c a3 54 2d fa 99 c3 a0 47 08  Safety Number: 74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989
+        #
+        #real    0m2.921s
+        #user    0m2.792s
+        #sys     0m0.116s
+        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# time ./signal-cli -u +61481073042 trust -v "74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989" +64220908052
+        #
+        #real    0m4.261s
+        #user    0m3.124s
+        #sys     0m0.140s
+        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# time ./signal-cli -u +61481073042 listIdentities
+        #+64275263733: TRUSTED_UNVERIFIED Added: Mon Nov 27 13:14:40 NZDT 2017 Fingerprint: 05 44 df fe 10 ec 38 47 d1 b5 14 79 37 ab 9e 1c 8a e5 37 d6 1e b6 8b 16 72 cf da 6e 97 9e 42 c3 33  Safety Number: 15778 20682 42583 15572 36500 86531 74249 00584 14631 26803 60323 14180
+        #+64224307685: TRUSTED_VERIFIED Added: Mon Nov 27 14:45:32 NZDT 2017 Fingerprint: 05 c6 cb 14 b9 b8 1b db af 92 3f f0 bb a4 36 92 f8 43 a6 78 30 94 3b fb 4b 7a a4 db 1c d6 3e 9e 62  Safety Number: 60455 13090 15565 16601 14619 41766 74249 00584 14631 26803 60323 14180
+        #+64220908052: TRUSTED_VERIFIED Added: Tue Nov 28 10:09:09 NZDT 2017 Fingerprint: 05 e6 ac fb ad fe b0 7d dd df ca f9 c3 29 db 14 34 7a fa 45 18 1a 68 9c a3 54 2d fa 99 c3 a0 47 08  Safety Number: 74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989
+        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# time ./signal-cli -u +61481073042 listIdentities
+        #+64275263733: TRUSTED_UNVERIFIED Added: Mon Nov 27 13:14:40 NZDT 2017 Fingerprint: 05 44 df fe 10 ec 38 47 d1 b5 14 79 37 ab 9e 1c 8a e5 37 d6 1e b6 8b 16 72 cf da 6e 97 9e 42 c3 33  Safety Number: 15778 20682 42583 15572 36500 86531 74249 00584 14631 26803 60323 14180
+        #+64224307685: TRUSTED_VERIFIED Added: Mon Nov 27 14:45:32 NZDT 2017 Fingerprint: 05 c6 cb 14 b9 b8 1b db af 92 3f f0 bb a4 36 92 f8 43 a6 78 30 94 3b fb 4b 7a a4 db 1c d6 3e 9e 62  Safety Number: 60455 13090 15565 16601 14619 41766 74249 00584 14631 26803 60323 14180
+        #+64220908052: TRUSTED_VERIFIED Added: Tue Nov 28 10:09:09 NZDT 2017 Fingerprint: 05 e6 ac fb ad fe b0 7d dd df ca f9 c3 29 db 14 34 7a fa 45 18 1a 68 9c a3 54 2d fa 99 c3 a0 47 08  Safety Number: 74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989
+        #+64220908052: UNTRUSTED Added: Tue Nov 28 10:12:50 NZDT 2017 Fingerprint: 05 f4 82 48 c2 b8 79 81 24 80 f7 b9 1d d8 fa c9 3e bd ec c3 76 9e d6 b0 54 a2 b1 d1 99 b6 eb ee 22  Safety Number: 74249 00584 14631 26803 60323 14180 77508 56318 57208 29012 65010 43730
 
-        return (attachment_id, attachment_url)
+        # Call signal-cli to send the message.
+        try:
+            # List identities.
+            process = subprocess.Popen(
+                [self.signal_cli, "listIdentities", "-u", self.username],
+                stderr=subprocess.PIPE,
+            )
+            stdout, stderr = process.communicate(30)
+            if process.returncode != 0:
+                raise SignalCLIError(process.returncode, stderr)
+
+            
+
+            
+
+            # Verify.
+            for safety_number in safety_numbers:
+                process = subprocess.Popen(
+                    [self.signal_cli, "listIdentities", "-u", self.username],
+                    stderr=subprocess.PIPE,
+                )
+                stdout, stderr = process.communicate(30)
+                if process.returncode != 0:
+                    raise SignalCLIError(process.returncode, stderr)
+        except TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+            # TODO: handle error appropriately for timing out
+        except CalledProcessError:
+            raise # TODO: handle appropriately
 
 
-    def attachment_upload(self, attachment_id, data):
+    def identities_read(self, data):
         '''
-        Upload data to the given attachment ID's location.
-
-        This method is not blocking, and is unaffected by the receive/send lock.
         '''
 
-        pass
+        # +64275263733: TRUSTED_UNVERIFIED Added: Mon Nov 27 13:14:40 NZDT 2017 Fingerprint: 05 44 df fe 10 ec 38 47 d1 b5 14 79 37 ab 9e 1c 8a e5 37 d6 1e b6 8b 16 72 cf da 6e 97 9e 42 c3 33  Safety Number: 15778 20682 42583 15572 36500 86531 74249 00584 14631 26803 60323 14180
+        # +64224307685: TRUSTED_VERIFIED Added: Mon Nov 27 14:45:32 NZDT 2017 Fingerprint: 05 c6 cb 14 b9 b8 1b db af 92 3f f0 bb a4 36 92 f8 43 a6 78 30 94 3b fb 4b 7a a4 db 1c d6 3e 9e 62  Safety Number: 60455 13090 15565 16601 14619 41766 74249 00584 14631 26803 60323 14180
+        # +64220908052: TRUSTED_VERIFIED Added: Tue Nov 28 10:09:09 NZDT 2017 Fingerprint: 05 e6 ac fb ad fe b0 7d dd df ca f9 c3 29 db 14 34 7a fa 45 18 1a 68 9c a3 54 2d fa 99 c3 a0 47 08  Safety Number: 74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989
+        # +64220908052: UNTRUSTED Added: Tue Nov 28 10:12:50 NZDT 2017 Fingerprint: 05 f4 82 48 c2 b8 79 81 24 80 f7 b9 1d d8 fa c9 3e bd ec c3 76 9e d6 b0 54 a2 b1 d1 99 b6 eb ee 22  Safety Number: 74249 00584 14631 26803 60323 14180 77508 56318 57208 29012 65010 43730
 
+        identities = []
+        data_stream = io.StringIO(data)
 
-    def attachment_retrieve(self, attachment_id):
-        '''
-        Retrieve data from the given attachment ID.
+        while True:
+            line = data_stream.readline()
 
-        This method is not blocking, and is unaffected by the receive/send lock.
-        '''
+            if line == "":
+                break
 
-        # ...
+            result = re.match("^(\+[0-9]+): (UNTRUSTED|TRUSTED_UNVERIFIED|TRUSTED_VERIFIED) Added: ((Mon|Tue|Wed|Thu|Fri) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9][0-9]? [0-9]{2}:[0-9]{2}:[0-9]{2} [^\s]+ [0-9]+) Fingerprint: ([0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2})  Safety Number: ([0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5})$", line)
 
-        return data
+            identities.append({
+                "number": result.group(1),
+                "status": result.group(2),
+                "added_date": result.group(3),
+                "fingerprint": result.group(6),
+                "safety_number": result.group(7),
+            })
+
+        return identities
