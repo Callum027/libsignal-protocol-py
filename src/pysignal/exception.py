@@ -35,7 +35,7 @@ class SignalCLIError(SignalException):
         '''
         '''
 
-        self.returncode = status_code
+        self.returncode = returncode
         self.error_message = error_message
         super().__init__("ERROR {}: {}".format(self.returncode, self.error_message))
 

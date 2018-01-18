@@ -53,101 +53,45 @@ class Signal(object):
 
 
     #
-    ## Message methods.
+    ##
     #
 
 
-    def messages_read(self, data):
+    def signal_cli_call(self, *args, username=self.username, timeout=60):
         '''
         '''
 
-        # Envelope from: +64275263733 (device: 1)
-        # Timestamp: 1511746018074 (2017-11-27T01:26:58.074Z)
-        # Got receipt.
+        process_args = [self.signal_cli]
+        process_args.extend(args)
+        process_args.extend(["-u", username])
 
-        # Envelope from: +64275263733 (device: 1)
-        # Timestamp: 1511746064589 (2017-11-27T01:27:44.589Z)
+        try:
+            process = subprocess.Popen(
+                process_args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            stdout, stderr = process.communicate(30)
 
-        # Envelope from: +64275263733 (device: 1)
-        # Timestamp: 1511746101590 (2017-11-27T01:28:21.590Z)
-        # Message timestamp: 1511746101590 (2017-11-27T01:28:21.590Z)
-        # Body: Hddhfjfjfjfjffigf
+            if process.returncode != 0:
+                raise SignalCLIError(process.returncode, stderr)
 
-        messages = []
-        data_stream = io.StringIO(data)
+            return (stdout, stderr)
 
-        current_message = None
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+            raise RuntimeError(
+                "timeout reached ({} seconds)\n\nstdout:\n{}\n\nstderr:\n{}".format(
+                    timeout,
+                    stdout,
+                    stderr,
+                ),
+            )
 
-        while True:
-            line = data_stream.readline()
+        except subprocess.CalledProcessError:
+            raise # TODO: handle appropriately
 
-            if line == "":
-                break
-
-            if current_message is None:
-                if line.startswith("Envelope from"):
-                    result = re.match("^Envelope from: (\+[0-9]+) \(device: ([0-9]+)\)$", line)
-                    current_message = {
-                        "number": result.group(1),
-                        "device": int(result.group(2)),
-                        "timestamp": None,
-                        "message_timestamp": None,
-                        "receipt": False,
-                        "body": None,
-                    }
-                else:
-                    raise RuntimeError(
-                        "found an 'Envelope from' line "
-                        "while processing a previous message",
-                    )
-
-            else:
-                # Empty line signals end of last message.
-                if line == "\n" and current_message is not None:
-                    messages.append(current_message)
-                    current_message = None
-
-                elif line.startswith("Timestamp"):
-                    result = re.match(
-                        "^Timestamp: ([0-9]+) "
-                        "\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
-                        "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$",
-                        line,
-                    )
-                    current_message["timestamp"] = int(result.group(1))
-
-                elif current_message is not None and line.startswith("Message timestamp"):
-                    result = re.match(
-                        "^Message timestamp: ([0-9]+) "
-                        "\([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
-                        "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$",
-                        line,
-                    )
-                    current_message["message_timestamp"] = int(result.group(1))
-
-                elif current_message is not None and line.strip("\n") == "Got receipt.":
-                    if current_message["body"] is not None:
-                        # raise a stink
-                        raise RuntimeError(
-                            "current_message[\"body\"] is not None "
-                            "but current_message[\"receipt\"] will be set to True"
-                        )
-                    current_message["receipt"] = True
-
-                elif current_message is not None and line.startswith("Body"):
-                    if current_message["receipt"] is True:
-                        raise RuntimeError(
-                            "current_message[\"receipt\"] is True "
-                            "but current_message[\"body\"] will have data put in it"
-                        )
-                    current_message["body"] = re.sub("^Body: ", "", line).strip("\n")
-
-        # Finalise last message.
-        if current_message is not None:
-            messages.append(current_message)
-            current_message = None
-
-        return messages
 
 
     #
@@ -166,40 +110,97 @@ class Signal(object):
         self.lock.acquire(blocking=True)
 
         try:
-            return self._receive(self)
-
+            return self.receive_messages_get()
         finally:
             self.lock.release()
 
 
-    def _receive(self):
+    def receive_messages_get(self):
         '''
         '''
 
-        # TODO: add attachment support.
+        return Signal.messages_read(self.signal_cli_call("receive"))
 
-        try:
-            process = subprocess.Popen(
-                [self.signal_cli, "receive", "-u", self.username],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            stdout, stderr = process.communicate(60)
 
-            if process.returncode != 0:
-                raise SignalCLIError(process.returncode, stderr)
+    # pylint: disable=too-many-branches
+    @staticmethod
+    def messages_read(data):
+        '''
+        '''
 
-            return self.messages_read(stdout)
+        messages = []
+        data_stream = io.StringIO(data)
 
-        except TimeoutExpired:
-            process.kill()
-            stdout, stderr = process.communicate()
-            raise RuntimeError(
-                "timeout reached (60 seconds)\n\nstdout:\n{}\n\nstderr:\n{}".format(stdout, stderr),
-            )
+        current_message = {}
 
-        except CalledProcessError:
-            raise # TODO: handle appropriately
+        while True:
+            line = data_stream.readline()
+
+            if line == "":
+                break
+
+            if not current_message:
+                if line.startswith("Envelope from"):
+                    result = re.match(r"^Envelope from: (\+[0-9]+) \(device: ([0-9]+)\)$", line)
+                    current_message = {
+                        "number": result.group(1),
+                        "device": int(result.group(2)),
+                        "timestamp": None,
+                        "message_timestamp": None,
+                        "receipt": False,
+                        "body": None,
+                    }
+                else:
+                    raise RuntimeError(
+                        "found an 'Envelope from' line "
+                        "while processing a previous message",
+                    )
+
+            else: # current_message is not empty
+                # Empty line signals end of last message.
+                if line == "\n":
+                    messages.append(current_message)
+                    current_message = {}
+
+                elif line.startswith("Timestamp"):
+                    result = re.match(
+                        # pylint: disable=line-too-long
+                        r"^Timestamp: ([0-9]+) \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$",
+                        line,
+                    )
+                    current_message["timestamp"] = int(result.group(1))
+
+                elif line.startswith("Message timestamp"):
+                    result = re.match(
+                        # pylint: disable=line-too-long
+                        r"^Message timestamp: ([0-9]+) \([0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]\.[0-9][0-9][0-9]Z\)$",
+                        line,
+                    )
+                    current_message["message_timestamp"] = int(result.group(1))
+
+                elif line.strip("\n") == "Got receipt.":
+                    if current_message["body"] is not None:
+                        # raise a stink
+                        raise RuntimeError(
+                            "current_message[\"body\"] is not None "
+                            "but current_message[\"receipt\"] will be set to True"
+                        )
+                    current_message["receipt"] = True
+
+                elif line.startswith("Body"):
+                    if current_message["receipt"] is True:
+                        raise RuntimeError(
+                            "current_message[\"receipt\"] is True "
+                            "but current_message[\"body\"] will have data put in it"
+                        )
+                    current_message["body"] = re.sub(r"^Body: ", "", line).strip("\n")
+
+        # Finalise last message.
+        if current_message:
+            messages.append(current_message)
+            current_message = {}
+
+        return messages
 
 
     #
@@ -207,10 +208,12 @@ class Signal(object):
     #
 
 
+    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-locals
     def send(self, message,
              recipient=None, recipients=None,
              attachment=None, attachments=None,
-             group=None, verify_receipt=False):
+             verify_receipt=False):
         '''
         Send a message to Signal to be sent to the given recipients.
 
@@ -222,9 +225,10 @@ class Signal(object):
         run receive() or send().
         '''
 
-        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# ./signal-cli -u +61481073042 send -m "Test Message 02" +64220908052
-        #Failed to send (some) messages:
-        #Untrusted Identity for "+64220908052": Untrusted identity key!
+        # TODO: incorporate error checking for this
+        # ./signal-cli -u +61481073042 send -m "Test Message 02" +64220908052
+        # Failed to send (some) messages:
+        # Untrusted Identity for "+64220908052": Untrusted identity key!
 
         # * Allow more than one recipient and attachment to be specified.
         # * Take a timestamp of when the message was sent, look for the first receipt for
@@ -236,10 +240,8 @@ class Signal(object):
         unhandled_messages = []
 
         try:
-            process = None
-
             # Prepare the signal-cli arguments.
-            args = [self.signal_cli, "send", "-u", self.username, "-m", message]
+            args = ["send", "-m", message]
             if attachments is not None:
                 args.append("-a")
                 args.extend(attachments)
@@ -254,20 +256,7 @@ class Signal(object):
             timestamp = (datetime.datetime.utcnow() * 1000.0).timestamp()
 
             # Call signal-cli to send the message.
-            try:
-                process = subprocess.Popen(
-                    args,
-                    stderr=subprocess.PIPE,
-                )
-                stdout, stderr = process.communicate(30)
-                if process.returncode != 0:
-                    raise SignalCLIError(process.returncode, stderr)
-            except TimeoutExpired:
-                process.kill()
-                stdout, stderr = process.communicate()
-                # TODO: handle error appropriately for timing out
-            except CalledProcessError:
-                raise # TODO: handle appropriately
+            self.signal_cli_call(*args)
 
             # TODO: Try and find a better way to implement this... if possible.
             #
@@ -279,7 +268,7 @@ class Signal(object):
             if verify_receipt:
                 receipt_verified = False
                 while not receipt_verified:
-                    messages = self._receive()
+                    messages = self.receive_messages_get()
                     receipts = [message for message in messages if message["receipt"]]
                     sorted_receipts = sorted(receipts, key=lambda x: x["timestamp"])
                     for receipt in sorted_receipts:
@@ -289,7 +278,7 @@ class Signal(object):
                         # timestamped AFTER ours, which we may safely assume to be
                         # receipt for this message.
                         receipt_verified = True
-                        pass # TODO: finish
+                        # TODO: finish
 
         finally:
             self.lock.release()
@@ -302,74 +291,37 @@ class Signal(object):
     #
 
 
-    def safety_number_verify(self, safety_number):
+    def safety_number_verify(self):
         '''
         '''
 
-        # TODO
-        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# time ./signal-cli -u +61481073042 listIdentities
-        #+64275263733: TRUSTED_UNVERIFIED Added: Mon Nov 27 13:14:40 NZDT 2017 Fingerprint: 05 44 df fe 10 ec 38 47 d1 b5 14 79 37 ab 9e 1c 8a e5 37 d6 1e b6 8b 16 72 cf da 6e 97 9e 42 c3 33  Safety Number: 15778 20682 42583 15572 36500 86531 74249 00584 14631 26803 60323 14180
-        #+64224307685: TRUSTED_VERIFIED Added: Mon Nov 27 14:45:32 NZDT 2017 Fingerprint: 05 c6 cb 14 b9 b8 1b db af 92 3f f0 bb a4 36 92 f8 43 a6 78 30 94 3b fb 4b 7a a4 db 1c d6 3e 9e 62  Safety Number: 60455 13090 15565 16601 14619 41766 74249 00584 14631 26803 60323 14180
-        #+64220908052: TRUSTED_UNVERIFIED Added: Tue Nov 28 10:09:09 NZDT 2017 Fingerprint: 05 e6 ac fb ad fe b0 7d dd df ca f9 c3 29 db 14 34 7a fa 45 18 1a 68 9c a3 54 2d fa 99 c3 a0 47 08  Safety Number: 74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989
-        #
-        #real    0m2.921s
-        #user    0m2.792s
-        #sys     0m0.116s
-        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# time ./signal-cli -u +61481073042 trust -v "74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989" +64220908052
-        #
-        #real    0m4.261s
-        #user    0m3.124s
-        #sys     0m0.140s
-        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# time ./signal-cli -u +61481073042 listIdentities
-        #+64275263733: TRUSTED_UNVERIFIED Added: Mon Nov 27 13:14:40 NZDT 2017 Fingerprint: 05 44 df fe 10 ec 38 47 d1 b5 14 79 37 ab 9e 1c 8a e5 37 d6 1e b6 8b 16 72 cf da 6e 97 9e 42 c3 33  Safety Number: 15778 20682 42583 15572 36500 86531 74249 00584 14631 26803 60323 14180
-        #+64224307685: TRUSTED_VERIFIED Added: Mon Nov 27 14:45:32 NZDT 2017 Fingerprint: 05 c6 cb 14 b9 b8 1b db af 92 3f f0 bb a4 36 92 f8 43 a6 78 30 94 3b fb 4b 7a a4 db 1c d6 3e 9e 62  Safety Number: 60455 13090 15565 16601 14619 41766 74249 00584 14631 26803 60323 14180
-        #+64220908052: TRUSTED_VERIFIED Added: Tue Nov 28 10:09:09 NZDT 2017 Fingerprint: 05 e6 ac fb ad fe b0 7d dd df ca f9 c3 29 db 14 34 7a fa 45 18 1a 68 9c a3 54 2d fa 99 c3 a0 47 08  Safety Number: 74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989
-        #root@cat-wlgwil-test-hotpotato2:/root/signal-cli-0.5.6/bin# time ./signal-cli -u +61481073042 listIdentities
-        #+64275263733: TRUSTED_UNVERIFIED Added: Mon Nov 27 13:14:40 NZDT 2017 Fingerprint: 05 44 df fe 10 ec 38 47 d1 b5 14 79 37 ab 9e 1c 8a e5 37 d6 1e b6 8b 16 72 cf da 6e 97 9e 42 c3 33  Safety Number: 15778 20682 42583 15572 36500 86531 74249 00584 14631 26803 60323 14180
-        #+64224307685: TRUSTED_VERIFIED Added: Mon Nov 27 14:45:32 NZDT 2017 Fingerprint: 05 c6 cb 14 b9 b8 1b db af 92 3f f0 bb a4 36 92 f8 43 a6 78 30 94 3b fb 4b 7a a4 db 1c d6 3e 9e 62  Safety Number: 60455 13090 15565 16601 14619 41766 74249 00584 14631 26803 60323 14180
-        #+64220908052: TRUSTED_VERIFIED Added: Tue Nov 28 10:09:09 NZDT 2017 Fingerprint: 05 e6 ac fb ad fe b0 7d dd df ca f9 c3 29 db 14 34 7a fa 45 18 1a 68 9c a3 54 2d fa 99 c3 a0 47 08  Safety Number: 74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989
-        #+64220908052: UNTRUSTED Added: Tue Nov 28 10:12:50 NZDT 2017 Fingerprint: 05 f4 82 48 c2 b8 79 81 24 80 f7 b9 1d d8 fa c9 3e bd ec c3 76 9e d6 b0 54 a2 b1 d1 99 b6 eb ee 22  Safety Number: 74249 00584 14631 26803 60323 14180 77508 56318 57208 29012 65010 43730
+        # TODO: Locking?
+        # self.lock.acquire(blocking=True)
+        # try:
 
-        # Call signal-cli to send the message.
-        try:
-            # List identities.
-            process = subprocess.Popen(
-                [self.signal_cli, "listIdentities", "-u", self.username],
-                stderr=subprocess.PIPE,
-            )
-            stdout, stderr = process.communicate(30)
-            if process.returncode != 0:
-                raise SignalCLIError(process.returncode, stderr)
+        # List identities.
+        identities = Signal.identities_read(self.signal_cli_call("listIdentities"))
 
-            
+        # TODO: Verify.
+        for identity in identities:
+            if identity["status"] == "UNTRUSTED":
+                # Untrusted. What to do in this case?
+                continue
+            elif identity["status"] == "TRUSTED_UNVERIFIED":
+                # Trusted but unverified, needs to be verified with user input?
+                continue
+            elif identity["status"] == "TRUSTED_VERIFIED":
+                # Trusted and verified identity. No need to do anything.
+                continue
 
-            
-
-            # Verify.
-            for safety_number in safety_numbers:
-                process = subprocess.Popen(
-                    [self.signal_cli, "listIdentities", "-u", self.username],
-                    stderr=subprocess.PIPE,
-                )
-                stdout, stderr = process.communicate(30)
-                if process.returncode != 0:
-                    raise SignalCLIError(process.returncode, stderr)
-        except TimeoutExpired:
-            process.kill()
-            stdout, stderr = process.communicate()
-            # TODO: handle error appropriately for timing out
-        except CalledProcessError:
-            raise # TODO: handle appropriately
+        # finally:
+        #   self.lock.release()
 
 
-    def identities_read(self, data):
+    @staticmethod
+    def identities_read(data):
         '''
         '''
-
-        # +64275263733: TRUSTED_UNVERIFIED Added: Mon Nov 27 13:14:40 NZDT 2017 Fingerprint: 05 44 df fe 10 ec 38 47 d1 b5 14 79 37 ab 9e 1c 8a e5 37 d6 1e b6 8b 16 72 cf da 6e 97 9e 42 c3 33  Safety Number: 15778 20682 42583 15572 36500 86531 74249 00584 14631 26803 60323 14180
-        # +64224307685: TRUSTED_VERIFIED Added: Mon Nov 27 14:45:32 NZDT 2017 Fingerprint: 05 c6 cb 14 b9 b8 1b db af 92 3f f0 bb a4 36 92 f8 43 a6 78 30 94 3b fb 4b 7a a4 db 1c d6 3e 9e 62  Safety Number: 60455 13090 15565 16601 14619 41766 74249 00584 14631 26803 60323 14180
-        # +64220908052: TRUSTED_VERIFIED Added: Tue Nov 28 10:09:09 NZDT 2017 Fingerprint: 05 e6 ac fb ad fe b0 7d dd df ca f9 c3 29 db 14 34 7a fa 45 18 1a 68 9c a3 54 2d fa 99 c3 a0 47 08  Safety Number: 74249 00584 14631 26803 60323 14180 89548 91050 80140 81284 06917 18989
-        # +64220908052: UNTRUSTED Added: Tue Nov 28 10:12:50 NZDT 2017 Fingerprint: 05 f4 82 48 c2 b8 79 81 24 80 f7 b9 1d d8 fa c9 3e bd ec c3 76 9e d6 b0 54 a2 b1 d1 99 b6 eb ee 22  Safety Number: 74249 00584 14631 26803 60323 14180 77508 56318 57208 29012 65010 43730
 
         identities = []
         data_stream = io.StringIO(data)
@@ -380,7 +332,8 @@ class Signal(object):
             if line == "":
                 break
 
-            result = re.match("^(\+[0-9]+): (UNTRUSTED|TRUSTED_UNVERIFIED|TRUSTED_VERIFIED) Added: ((Mon|Tue|Wed|Thu|Fri) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9][0-9]? [0-9]{2}:[0-9]{2}:[0-9]{2} [^\s]+ [0-9]+) Fingerprint: ([0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2})  Safety Number: ([0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5})$", line)
+            # pylint: disable=line-too-long
+            result = re.match(r"^(\+[0-9]+): (UNTRUSTED|TRUSTED_UNVERIFIED|TRUSTED_VERIFIED) Added: ((Mon|Tue|Wed|Thu|Fri) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [0-9][0-9]? [0-9]{2}:[0-9]{2}:[0-9]{2} [^\s]+ [0-9]+) Fingerprint: ([0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2} [0-9A-Fa-f]{2})  Safety Number: ([0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5} [0-9]{5})$", line)
 
             identities.append({
                 "number": result.group(1),

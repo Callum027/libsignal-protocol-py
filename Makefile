@@ -154,7 +154,7 @@ all:
 
 
 lint:
-	$(PYLINT) $(SRC_DIR)/signal --disable=duplicate-code 2>&1 | tee make-lint.log
+	$(PYLINT) $(SRC_DIR)/pysignal --disable=duplicate-code 2>&1 | tee make-lint.log
 	@echo "pylint output written to make-lint.log"
 
 
